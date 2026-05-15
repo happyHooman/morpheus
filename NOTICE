@@ -1,0 +1,29 @@
+Morpheus
+================================================================================
+
+This project is derived from two upstream sources:
+
+--------------------------------------------------------------------------------
+Graphiti
+  Upstream: https://github.com/getzep/graphiti
+  License: Apache License 2.0 (see LICENSE)
+  Carry-over commit: 56cf7b3 (tag v0.29.0)
+  Description: Build Real-Time Knowledge Graphs for AI Agents
+  Copyright (c) Zep Software, Inc.
+
+Morpheus inherits Graphiti's directory structure at the repository root (graphiti_core/, mcp_server/, server/, tests/, etc.). Modifications made within this fork are licensed under Apache License 2.0 in keeping with upstream's terms.
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+Graphify (PyPI: graphifyy)
+  Upstream: https://github.com/safishamsi/graphify
+  License: MIT
+  Integrated version: 0.7.16 (tag v0.7.16, 2026-05-15)
+  Integrated commit: ab32098063adb1ab4d9247747742958ad185db41
+  Description: Turn any folder of code, docs, papers, images, or videos into a queryable knowledge graph.
+  Copyright (c) 2026 Safi Shamsi
+
+Graphify source lives under graphify/ as native, fully-modifiable source — not a submodule or subtree. The MIT license terms continue to apply to the originally-integrated code; modifications made within this fork retain MIT compatibility.
+--------------------------------------------------------------------------------
+
+For each upstream, the original LICENSE text is preserved either at the repository root (Graphiti's LICENSE) or under graphify/LICENSE (after Graphify integration). Do not remove either file.

@@ -1,3 +1,19 @@
+# --- Local-only: AI agent tooling & research notes ---
+# Kept on the local machine, never committed.
+# Project-level overrides; see also project policy notes.
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+.claude/
+.cursor/
+.cursorrules
+.aider*
+.opencode/
+.codex/
+
+# Research journal — local-only notes
+/journal/
+
 ### Python template
 # Byte-compiled / optimized / DLL files
 __pycache__/
