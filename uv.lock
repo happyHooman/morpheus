@@ -990,6 +990,7 @@ name = "graphiti-core"
 version = "0.29.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "neo4j" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -1071,6 +1072,7 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'dev'", specifier = ">=1.39.16" },
     { name = "boto3", marker = "extra == 'neo4j-opensearch'", specifier = ">=1.39.16" },
     { name = "boto3", marker = "extra == 'neptune'", specifier = ">=1.39.16" },
+    { name = "click", specifier = ">=8.1" },
     { name = "falkordb", marker = "extra == 'dev'", specifier = ">=1.1.2,<2.0.0" },
     { name = "falkordb", marker = "extra == 'falkordb'", specifier = ">=1.1.2,<2.0.0" },
     { name = "gliner2", marker = "python_full_version >= '3.11' and extra == 'gliner2'", specifier = ">=1.2.0" },
