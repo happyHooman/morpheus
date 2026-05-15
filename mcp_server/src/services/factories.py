@@ -99,151 +99,97 @@ class LLMClientFactory:
 
     @staticmethod
     def create(config: LLMConfig) -> LLMClient:
-        """Create an LLM client based on the configured provider."""
+        """Create an LLM client based on the configured provider.
+
+        Simple providers (openai, anthropic, gemini, groq) delegate to
+        ``graphiti_core.llm_client.factory.make_llm_client`` so the
+        provider-name → client-class mapping lives in one place. The
+        ``azure_openai`` path stays here because it needs custom
+        ``AsyncOpenAI`` client construction against a v1-compatibility
+        endpoint, which is mcp_server specific.
+        """
         import logging
+
+        from graphiti_core.llm_client.factory import make_llm_client
 
         logger = logging.getLogger(__name__)
 
         provider = config.provider.lower()
 
-        match provider:
-            case 'openai':
-                if not config.providers.openai:
-                    raise ValueError('OpenAI provider configuration not found')
-
-                api_key = config.providers.openai.api_key
-                _validate_api_key('OpenAI', api_key, logger)
-
-                from graphiti_core.llm_client.config import LLMConfig as CoreLLMConfig
-
-                # Use the same model for both main and small model slots
-                small_model = config.model
-
-                llm_config = CoreLLMConfig(
-                    api_key=api_key,
-                    model=config.model,
-                    small_model=small_model,
-                    temperature=config.temperature,
-                    max_tokens=config.max_tokens,
+        if provider == 'azure_openai':
+            if not HAS_AZURE_LLM:
+                raise ValueError(
+                    'Azure OpenAI LLM client not available in current graphiti-core version'
                 )
+            if not config.providers.azure_openai:
+                raise ValueError('Azure OpenAI provider configuration not found')
+            azure_config = config.providers.azure_openai
 
-                # Check if this is a reasoning model (o1, o3, gpt-5 family)
-                reasoning_prefixes = ('o1', 'o3', 'gpt-5')
-                is_reasoning_model = config.model.startswith(reasoning_prefixes)
+            if not azure_config.api_url:
+                raise ValueError('Azure OpenAI API URL is required')
 
-                # Only pass reasoning/verbosity parameters for reasoning models (gpt-5 family)
-                if is_reasoning_model:
-                    return OpenAIClient(config=llm_config, reasoning='minimal', verbosity='low')
-                else:
-                    # For non-reasoning models, explicitly pass None to disable these parameters
-                    return OpenAIClient(config=llm_config, reasoning=None, verbosity=None)
+            # Currently using API key authentication
+            # TODO: Add Azure AD authentication support for v1 API compatibility
+            api_key = azure_config.api_key
+            _validate_api_key('Azure OpenAI', api_key, logger)
 
-            case 'azure_openai':
-                if not HAS_AZURE_LLM:
-                    raise ValueError(
-                        'Azure OpenAI LLM client not available in current graphiti-core version'
-                    )
-                if not config.providers.azure_openai:
-                    raise ValueError('Azure OpenAI provider configuration not found')
-                azure_config = config.providers.azure_openai
+            # Azure OpenAI should use the standard AsyncOpenAI client with v1 compatibility endpoint
+            # See: https://github.com/getzep/graphiti README Azure OpenAI section
+            from openai import AsyncOpenAI
 
-                if not azure_config.api_url:
-                    raise ValueError('Azure OpenAI API URL is required')
+            # Ensure the base_url ends with /openai/v1/ for Azure v1 compatibility
+            base_url = azure_config.api_url
+            if not base_url.endswith('/'):
+                base_url += '/'
+            if not base_url.endswith('openai/v1/'):
+                base_url += 'openai/v1/'
 
-                # Currently using API key authentication
-                # TODO: Add Azure AD authentication support for v1 API compatibility
-                api_key = azure_config.api_key
-                _validate_api_key('Azure OpenAI', api_key, logger)
+            azure_client = AsyncOpenAI(
+                base_url=base_url,
+                api_key=api_key,
+            )
 
-                # Azure OpenAI should use the standard AsyncOpenAI client with v1 compatibility endpoint
-                # See: https://github.com/getzep/graphiti README Azure OpenAI section
-                from openai import AsyncOpenAI
+            # Then create the LLMConfig
+            llm_config = GraphitiLLMConfig(
+                api_key=api_key,
+                base_url=base_url,
+                model=config.model,
+                temperature=config.temperature,
+                max_tokens=config.max_tokens,
+            )
 
-                # Ensure the base_url ends with /openai/v1/ for Azure v1 compatibility
-                base_url = azure_config.api_url
-                if not base_url.endswith('/'):
-                    base_url += '/'
-                if not base_url.endswith('openai/v1/'):
-                    base_url += 'openai/v1/'
+            return AzureOpenAILLMClient(
+                azure_client=azure_client,
+                config=llm_config,
+                max_tokens=config.max_tokens,
+            )
 
-                azure_client = AsyncOpenAI(
-                    base_url=base_url,
-                    api_key=api_key,
-                )
+        # Pull provider-specific config block; nested attribute mirrors the
+        # match arms removed above (config.providers.openai, .anthropic, etc.).
+        provider_block = getattr(config.providers, provider, None)
+        if provider_block is None:
+            raise ValueError(f'{provider} provider configuration not found')
 
-                # Then create the LLMConfig
-                from graphiti_core.llm_client.config import LLMConfig as CoreLLMConfig
+        api_key = provider_block.api_key
+        _validate_api_key(provider.capitalize(), api_key, logger)
 
-                llm_config = CoreLLMConfig(
-                    api_key=api_key,
-                    base_url=base_url,
-                    model=config.model,
-                    temperature=config.temperature,
-                    max_tokens=config.max_tokens,
-                )
+        # openai reused config.model for both main and small slots in the
+        # original match; preserve that exactly. Other providers don't set
+        # small_model.
+        small_model = config.model if provider == 'openai' else None
 
-                return AzureOpenAILLMClient(
-                    azure_client=azure_client,
-                    config=llm_config,
-                    max_tokens=config.max_tokens,
-                )
+        # groq is the only simple provider that passes a base_url.
+        base_url = getattr(provider_block, 'api_url', None) if provider == 'groq' else None
 
-            case 'anthropic':
-                if not HAS_ANTHROPIC:
-                    raise ValueError(
-                        'Anthropic client not available in current graphiti-core version'
-                    )
-                if not config.providers.anthropic:
-                    raise ValueError('Anthropic provider configuration not found')
-
-                api_key = config.providers.anthropic.api_key
-                _validate_api_key('Anthropic', api_key, logger)
-
-                llm_config = GraphitiLLMConfig(
-                    api_key=api_key,
-                    model=config.model,
-                    temperature=config.temperature,
-                    max_tokens=config.max_tokens,
-                )
-                return AnthropicClient(config=llm_config)
-
-            case 'gemini':
-                if not HAS_GEMINI:
-                    raise ValueError('Gemini client not available in current graphiti-core version')
-                if not config.providers.gemini:
-                    raise ValueError('Gemini provider configuration not found')
-
-                api_key = config.providers.gemini.api_key
-                _validate_api_key('Gemini', api_key, logger)
-
-                llm_config = GraphitiLLMConfig(
-                    api_key=api_key,
-                    model=config.model,
-                    temperature=config.temperature,
-                    max_tokens=config.max_tokens,
-                )
-                return GeminiClient(config=llm_config)
-
-            case 'groq':
-                if not HAS_GROQ:
-                    raise ValueError('Groq client not available in current graphiti-core version')
-                if not config.providers.groq:
-                    raise ValueError('Groq provider configuration not found')
-
-                api_key = config.providers.groq.api_key
-                _validate_api_key('Groq', api_key, logger)
-
-                llm_config = GraphitiLLMConfig(
-                    api_key=api_key,
-                    base_url=config.providers.groq.api_url,
-                    model=config.model,
-                    temperature=config.temperature,
-                    max_tokens=config.max_tokens,
-                )
-                return GroqClient(config=llm_config)
-
-            case _:
-                raise ValueError(f'Unsupported LLM provider: {provider}')
+        return make_llm_client(
+            provider=provider,
+            api_key=api_key,
+            model=config.model,
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            base_url=base_url,
+            small_model=small_model,
+        )
 
 
 class EmbedderFactory:
@@ -251,111 +197,77 @@ class EmbedderFactory:
 
     @staticmethod
     def create(config: EmbedderConfig) -> EmbedderClient:
-        """Create an Embedder client based on the configured provider."""
+        """Create an Embedder client based on the configured provider.
+
+        Simple providers (openai, gemini, voyage) delegate to
+        ``graphiti_core.llm_client.factory.make_embedder``. The
+        ``azure_openai`` path stays here because it needs custom
+        ``AsyncOpenAI`` client construction.
+        """
         import logging
+
+        from graphiti_core.llm_client.factory import make_embedder
 
         logger = logging.getLogger(__name__)
 
         provider = config.provider.lower()
 
-        match provider:
-            case 'openai':
-                if not config.providers.openai:
-                    raise ValueError('OpenAI provider configuration not found')
-
-                api_key = config.providers.openai.api_key
-                _validate_api_key('OpenAI Embedder', api_key, logger)
-
-                from graphiti_core.embedder.openai import OpenAIEmbedderConfig
-
-                embedder_config = OpenAIEmbedderConfig(
-                    api_key=api_key,
-                    embedding_model=config.model,
-                    base_url=config.providers.openai.api_url,  # Support custom endpoints like Ollama
-                    embedding_dim=config.dimensions,  # Support custom embedding dimensions
+        if provider == 'azure_openai':
+            if not HAS_AZURE_EMBEDDER:
+                raise ValueError(
+                    'Azure OpenAI embedder not available in current graphiti-core version'
                 )
-                return OpenAIEmbedder(config=embedder_config)
+            if not config.providers.azure_openai:
+                raise ValueError('Azure OpenAI provider configuration not found')
+            azure_config = config.providers.azure_openai
 
-            case 'azure_openai':
-                if not HAS_AZURE_EMBEDDER:
-                    raise ValueError(
-                        'Azure OpenAI embedder not available in current graphiti-core version'
-                    )
-                if not config.providers.azure_openai:
-                    raise ValueError('Azure OpenAI provider configuration not found')
-                azure_config = config.providers.azure_openai
+            if not azure_config.api_url:
+                raise ValueError('Azure OpenAI API URL is required')
 
-                if not azure_config.api_url:
-                    raise ValueError('Azure OpenAI API URL is required')
+            # Currently using API key authentication
+            # TODO: Add Azure AD authentication support for v1 API compatibility
+            api_key = azure_config.api_key
+            _validate_api_key('Azure OpenAI Embedder', api_key, logger)
 
-                # Currently using API key authentication
-                # TODO: Add Azure AD authentication support for v1 API compatibility
-                api_key = azure_config.api_key
-                _validate_api_key('Azure OpenAI Embedder', api_key, logger)
+            # Azure OpenAI should use the standard AsyncOpenAI client with v1 compatibility endpoint
+            # See: https://github.com/getzep/graphiti README Azure OpenAI section
+            from openai import AsyncOpenAI
 
-                # Azure OpenAI should use the standard AsyncOpenAI client with v1 compatibility endpoint
-                # See: https://github.com/getzep/graphiti README Azure OpenAI section
-                from openai import AsyncOpenAI
+            # Ensure the base_url ends with /openai/v1/ for Azure v1 compatibility
+            base_url = azure_config.api_url
+            if not base_url.endswith('/'):
+                base_url += '/'
+            if not base_url.endswith('openai/v1/'):
+                base_url += 'openai/v1/'
 
-                # Ensure the base_url ends with /openai/v1/ for Azure v1 compatibility
-                base_url = azure_config.api_url
-                if not base_url.endswith('/'):
-                    base_url += '/'
-                if not base_url.endswith('openai/v1/'):
-                    base_url += 'openai/v1/'
+            azure_client = AsyncOpenAI(
+                base_url=base_url,
+                api_key=api_key,
+            )
 
-                azure_client = AsyncOpenAI(
-                    base_url=base_url,
-                    api_key=api_key,
-                )
+            return AzureOpenAIEmbedderClient(
+                azure_client=azure_client,
+                model=config.model or 'text-embedding-3-small',
+            )
 
-                return AzureOpenAIEmbedderClient(
-                    azure_client=azure_client,
-                    model=config.model or 'text-embedding-3-small',
-                )
+        provider_block = getattr(config.providers, provider, None)
+        if provider_block is None:
+            raise ValueError(f'{provider} provider configuration not found')
 
-            case 'gemini':
-                if not HAS_GEMINI_EMBEDDER:
-                    raise ValueError(
-                        'Gemini embedder not available in current graphiti-core version'
-                    )
-                if not config.providers.gemini:
-                    raise ValueError('Gemini provider configuration not found')
+        api_key = provider_block.api_key
+        _validate_api_key(f'{provider.capitalize()} Embedder', api_key, logger)
 
-                api_key = config.providers.gemini.api_key
-                _validate_api_key('Gemini Embedder', api_key, logger)
+        # openai is the only embedder provider whose api_url is honored for
+        # custom endpoints (e.g. Ollama-style).
+        base_url = getattr(provider_block, 'api_url', None) if provider == 'openai' else None
 
-                from graphiti_core.embedder.gemini import GeminiEmbedderConfig
-
-                gemini_config = GeminiEmbedderConfig(
-                    api_key=api_key,
-                    embedding_model=config.model or 'models/text-embedding-004',
-                    embedding_dim=config.dimensions or 768,
-                )
-                return GeminiEmbedder(config=gemini_config)
-
-            case 'voyage':
-                if not HAS_VOYAGE_EMBEDDER:
-                    raise ValueError(
-                        'Voyage embedder not available in current graphiti-core version'
-                    )
-                if not config.providers.voyage:
-                    raise ValueError('Voyage provider configuration not found')
-
-                api_key = config.providers.voyage.api_key
-                _validate_api_key('Voyage Embedder', api_key, logger)
-
-                from graphiti_core.embedder.voyage import VoyageAIEmbedderConfig
-
-                voyage_config = VoyageAIEmbedderConfig(
-                    api_key=api_key,
-                    embedding_model=config.model or 'voyage-3',
-                    embedding_dim=config.dimensions or 1024,
-                )
-                return VoyageAIEmbedder(config=voyage_config)
-
-            case _:
-                raise ValueError(f'Unsupported Embedder provider: {provider}')
+        return make_embedder(
+            provider=provider,
+            api_key=api_key,
+            model=config.model,
+            embedding_dim=config.dimensions,
+            base_url=base_url,
+        )
 
 
 class DatabaseDriverFactory:
